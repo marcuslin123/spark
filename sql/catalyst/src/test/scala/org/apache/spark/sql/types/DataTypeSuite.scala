@@ -273,6 +273,22 @@ class DataTypeSuite extends SparkFunSuite with SQLHelper {
     }
   }
 
+  test("SPARK-57164: from DDL roundtrip for nanos timestamp types (preview flag enabled)") {
+    withSQLConf(SQLConf.TIMESTAMP_NANOS_TYPES_ENABLED.key -> "true") {
+      Seq(
+        TimestampLTZNanosType(TimestampLTZNanosType.MIN_PRECISION),
+        TimestampLTZNanosType(8),
+        TimestampLTZNanosType(TimestampLTZNanosType.MAX_PRECISION),
+        TimestampNTZNanosType(TimestampNTZNanosType.MIN_PRECISION),
+        TimestampNTZNanosType(8),
+        TimestampNTZNanosType(TimestampNTZNanosType.MAX_PRECISION)).foreach { dt =>
+          val parsed = StructType.fromDDL(s"a ${dt.sql}")
+          val expected = new StructType().add("a", dt)
+          assert(DataTypeUtils.sameType(parsed, expected))
+      }
+    }
+  }
+
   checkDataTypeFromJson(StringType)
   checkDataTypeFromDDL(StringType)
 
@@ -1576,6 +1592,26 @@ class DataTypeSuite extends SparkFunSuite with SQLHelper {
             condition = "FEATURE_NOT_ENABLED",
             parameters = Map(
               "featureName" -> featureName,
+              "configKey" -> "spark.sql.timestampNanosTypes.enabled",
+              "configValue" -> "true"))
+      }
+    }
+  }
+
+  test("SPARK-57164: DDL parser rejects nanos timestamp types when preview flag is off") {
+    withSQLConf(SQLConf.TIMESTAMP_NANOS_TYPES_ENABLED.key -> "false") {
+      Seq(
+        "TIMESTAMP_LTZ(7)",
+        "TIMESTAMP_NTZ(9)",
+        "TIMESTAMP(8) WITHOUT TIME ZONE",
+        "TIMESTAMP(7) WITH LOCAL TIME ZONE").foreach { typeStr =>
+          checkError(
+            exception = intercept[SparkException] {
+              StructType.fromDDL(s"a $typeStr")
+            },
+            condition = "FEATURE_NOT_ENABLED",
+            parameters = Map(
+              "featureName" -> "Nanosecond-precision timestamp types",
               "configKey" -> "spark.sql.timestampNanosTypes.enabled",
               "configValue" -> "true"))
       }
