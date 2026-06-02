@@ -289,6 +289,22 @@ class DataTypeSuite extends SparkFunSuite with SQLHelper {
     }
   }
 
+  test("SPARK-57164: DataType.fromDDL parses nanos timestamp types (preview flag enabled)") {
+    withSQLConf(SQLConf.TIMESTAMP_NANOS_TYPES_ENABLED.key -> "true") {
+      Seq(
+        "TIMESTAMP_LTZ(7)" -> TimestampLTZNanosType(7),
+        "TIMESTAMP_LTZ(8)" -> TimestampLTZNanosType(8),
+        "TIMESTAMP_LTZ(9)" -> TimestampLTZNanosType(9),
+        "TIMESTAMP_NTZ(7)" -> TimestampNTZNanosType(7),
+        "TIMESTAMP_NTZ(8)" -> TimestampNTZNanosType(8),
+        "TIMESTAMP_NTZ(9)" -> TimestampNTZNanosType(9), 
+        "TIMESTAMP(7) WITH LOCAL TIME ZONE" -> TimestampLTZNanosType(7),
+        "TIMESTAMP(9) WITHOUT TIME ZONE" -> TimestampNTZNanosType(9)).foreach { case (typeStr, expectedType) =>
+          val expected = StructType(Seq(StructField("a", expectedType)))
+          assert(DataType.fromDDL(s"a $typeStr") === expected)
+        }
+    }
+  }
   checkDataTypeFromJson(StringType)
   checkDataTypeFromDDL(StringType)
 
