@@ -1634,6 +1634,22 @@ class DataTypeSuite extends SparkFunSuite with SQLHelper {
     }
   }
 
+  test("SPARK-57164: DDL parser rejects invalid nanos timestamp precisions when preview flag is on") {
+    withSQLConf(SQLConf.TIMESTAMP_NANOS_TYPES_ENABLED.key -> "true") {
+      Seq("TIMESTAMP_NTZ" -> "TIMESTAMP_NTZ", "TIMESTAMP_LTZ" -> "TIMESTAMP_LTZ").foreach {
+        case (spelling, errorType) =>
+          Seq(0, 1, 6, 10, 99).foreach { p =>
+            checkError(
+              exception = intercept[SparkException] {
+                StructType.fromDDL(s"a $spelling($p)")
+              },
+              condition = "INVALID_TIMESTAMP_PRECISION",
+              parameters = Map("precision" -> p.toString, "type" -> errorType))
+          }
+      }
+    }
+  }
+
   test("singleton DataType equality after deserialization") {
     // Singleton DataTypes that use `case object` pattern matching (e.g., `case BinaryType =>`).
     // If a non-singleton instance is created (e.g., via Kryo deserialization which doesn't call
