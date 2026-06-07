@@ -324,6 +324,24 @@ class DataTypeSuite extends SparkFunSuite with SQLHelper {
     }
   }
 
+  test("SPARK-57164: cross-family round trip (JSON and DDL agree for nanos types)") {
+    withSQLConf(SQLConf.TIMESTAMP_NANOS_TYPES_ENABLED.key -> "true") {
+      Seq(
+        TimestampLTZNanosType(7),
+        TimestampLTZNanosType(8),
+        TimestampLTZNanosType(9),
+        TimestampNTZNanosType(7),
+        TimestampNTZNanosType(8),
+        TimestampNTZNanosType(9)).foreach { dt =>
+          val fromJson = DataType.fromJson(dt.json)
+          val fromDDL = DataType.fromDDL(s"a ${dt.sql}").fields(0).dataType
+          assert(fromJson === dt)
+          assert(fromDDL === dt)
+          assert(fromJson === fromDDL)
+        }
+    }
+  }
+
   checkDataTypeFromJson(StringType)
   checkDataTypeFromDDL(StringType)
 
