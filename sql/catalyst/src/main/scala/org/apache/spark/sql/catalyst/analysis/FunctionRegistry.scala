@@ -982,6 +982,7 @@ object FunctionRegistry {
     expression[LengthOfJsonArray]("json_array_length"),
     expression[JsonObjectKeys]("json_object_keys"),
     expression[JsonTypeof]("json_typeof"),
+    expression[JsonExists]("json_exists"),
 
     // Variant
     expressionBuilder("parse_json", ParseJsonExpressionBuilder),

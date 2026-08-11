@@ -2012,6 +2012,38 @@ class JsonFunctionsSuite extends SharedSparkSession {
     checkAnswer(df, Row(null))
   }
 
+  test("SPARK-58687: json_exists") {
+    checkAnswer(sql("""SELECT json_exists('{"a":{"b":1}}', '$.a.b')"""), Row(true))
+    checkAnswer(sql("""SELECT json_exists('{"a":null}', '$.a')"""), Row(true))
+    checkAnswer(sql("""SELECT json_exists('{"a":1}', '$.b')"""), Row(false))
+    checkAnswer(sql("""SELECT json_exists(CAST(NULL AS STRING), '$.a')"""), Row(null))
+    checkAnswer(sql("""SELECT json_exists('{"a":1}', CAST(NULL AS STRING))"""), Row(null))
+    checkAnswer(sql("""SELECT json_exists('not json', '$.a')"""), Row(false))
+    checkAnswer(sql("""SELECT json_exists('1 bad', '$')"""), Row(false))
+    checkAnswer(sql("""SELECT json_exists('[{"a":1},{"b":2}]', '$[*].b')"""), Row(true))
+
+    val df = Seq(
+      ("""{"a":null}""", "$.a"),
+      ("""{"a":1}""", "$.b"),
+      ("not json", "$.a"),
+      ("""[{"a":1},{"b":2}]""", "$[*].b")).toDF("json", "path")
+    val result = df.selectExpr("json_exists(json, path)")
+    assert(result.queryExecution.executedPlan.isInstanceOf[WholeStageCodegenExec])
+    checkAnswer(result, Seq(Row(true), Row(false), Row(false), Row(true)))
+  }
+
+  test("SPARK-58687: json_exists ON ERROR clause") {
+    checkAnswer(sql("""SELECT JSON_EXISTS('not json', '$.a' TRUE ON ERROR)"""), Row(true))
+    checkAnswer(sql("""SELECT JSON_EXISTS('not json', '$.a' FALSE ON ERROR)"""), Row(false))
+    checkAnswer(sql("""SELECT JSON_EXISTS('not json', '$.a' UNKNOWN ON ERROR)"""), Row(null))
+
+    val malformed = Seq("not json").toDF("json")
+    val exception = intercept[SparkException] {
+      malformed.selectExpr("JSON_EXISTS(json, '$.a' ERROR ON ERROR)").collect()
+    }
+    assert(exception.getCondition == "MALFORMED_RECORD_IN_PARSING.WITHOUT_SUGGESTION")
+  }
+
   test("function json_tuple - field names foldable") {
     withTempView("t") {
       val json = """{"a":1, "b":2, "c":3}"""

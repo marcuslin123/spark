@@ -1468,6 +1468,8 @@ primaryExpression
     | col=primaryExpression COLON path=semiStructuredExtractionPath                            #semiStructuredExtract
     | LEFT_PAREN namedExpression (COMMA namedExpression)+ RIGHT_PAREN                          #rowConstructor
     | LEFT_PAREN query RIGHT_PAREN                                                             #subqueryExpression
+    | JSON_EXISTS LEFT_PAREN jsonExpr=expression COMMA path=expression
+        jsonExistsOnErrorClause? RIGHT_PAREN                                                   #jsonExists
     | functionName LEFT_PAREN (setQuantifier? argument+=functionArgument
        (COMMA argument+=functionArgument)*)? RIGHT_PAREN
        (WITHIN GROUP LEFT_PAREN ORDER BY sortItem (COMMA sortItem)* RIGHT_PAREN)?
@@ -1486,6 +1488,10 @@ primaryExpression
        FROM srcStr=valueExpression RIGHT_PAREN                                                 #trim
     | OVERLAY LEFT_PAREN input=valueExpression PLACING replace=valueExpression
       FROM position=valueExpression (FOR length=valueExpression)? RIGHT_PAREN                  #overlay
+    ;
+
+jsonExistsOnErrorClause
+    : errorBehavior=(TRUE | FALSE | UNKNOWN | ERROR) ON ERROR
     ;
 
 semiStructuredExtractionPath
@@ -2231,6 +2237,7 @@ ansiNonReserved
     | ITEMS
     | ITERATE
     | JSON
+    | JSON_EXISTS
     | JSON_TABLE
     | KEY
     | KEYS
@@ -2667,6 +2674,7 @@ nonReserved
     | ITEMS
     | ITERATE
     | JSON
+    | JSON_EXISTS
     | JSON_TABLE
     | KEY
     | KEYS

@@ -4230,6 +4230,21 @@ class AstBuilder extends DataTypeAstBuilder
   }
 
   /**
+   * Create an ANSI SQL:2016 `JSON_EXISTS` expression.
+   */
+  override def visitJsonExists(ctx: JsonExistsContext): Expression = withOrigin(ctx) {
+    val errorMode = Option(ctx.jsonExistsOnErrorClause()).map { clause =>
+      clause.errorBehavior.getType match {
+        case SqlBaseParser.TRUE => JsonExistsOnError.TrueOnError
+        case SqlBaseParser.UNKNOWN => JsonExistsOnError.UnknownOnError
+        case SqlBaseParser.ERROR => JsonExistsOnError.ErrorOnError
+        case _ => JsonExistsOnError.FalseOnError
+      }
+    }.getOrElse(JsonExistsOnError.FalseOnError)
+    JsonExists(expression(ctx.jsonExpr), expression(ctx.path), errorMode)
+  }
+
+  /**
    * Create a function database (optional) and name pair.
    */
   protected def visitFunctionName(ctx: QualifiedNameContext): FunctionIdentifier = {

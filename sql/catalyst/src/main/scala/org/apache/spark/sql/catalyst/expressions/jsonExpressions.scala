@@ -38,6 +38,14 @@ import org.apache.spark.sql.internal.types.StringTypeWithCollation
 import org.apache.spark.sql.types._
 import org.apache.spark.unsafe.types.UTF8String
 
+sealed trait JsonExistsOnError
+object JsonExistsOnError {
+  case object TrueOnError extends JsonExistsOnError
+  case object FalseOnError extends JsonExistsOnError
+  case object UnknownOnError extends JsonExistsOnError
+  case object ErrorOnError extends JsonExistsOnError
+}
+
 /**
  * Extracts json object from a json string based on json path specified, and returns json string
  * of the extracted json object. It will return null if the input json string is invalid.
@@ -175,6 +183,138 @@ object GetJsonObject {
     }
   }
 
+}
+
+@ExpressionDescription(
+  usage = "_FUNC_(json_txt, path) - Returns true if `path` matches at least one JSON item.",
+  arguments = """
+    Arguments:
+      * json_txt - The JSON text to test.
+        An expression that evaluates to a string.
+      * path - The path identifying the JSON item to test.
+        An expression that evaluates to a string.
+  """,
+  examples = """
+    Examples:
+      > SELECT _FUNC_('{"a":{"b":1}}', '$.a.b');
+       true
+      > SELECT _FUNC_('{"a":null}', '$.a');
+       true
+      > SELECT _FUNC_('{"a":1}', '$.b');
+       false
+  """,
+  group = "json_funcs",
+  since = "4.4.0")
+case class JsonExists(
+    json: Expression,
+    path: Expression,
+    onError: JsonExistsOnError)
+  extends BinaryExpression
+  with ExpectsInputTypes {
+
+  def this(json: Expression, path: Expression) = {
+    this(json, path, JsonExistsOnError.FalseOnError)
+  }
+
+  override def left: Expression = json
+  override def right: Expression = path
+  override def inputTypes: Seq[AbstractDataType] =
+    Seq(
+      StringTypeWithCollation(supportsTrimCollation = true),
+      StringTypeWithCollation(supportsTrimCollation = true))
+  override def dataType: DataType = BooleanType
+  override def nullable: Boolean = true
+  override def prettyName: String = "json_exists"
+  override def stateful: Boolean = true
+
+  @transient
+  private lazy val evaluator = if (path.foldable) {
+    new GetJsonObjectEvaluator(path.eval().asInstanceOf[UTF8String])
+  } else {
+    new GetJsonObjectEvaluator()
+  }
+
+  override def eval(input: InternalRow): Any = {
+    val jsonValue = json.eval(input).asInstanceOf[UTF8String]
+    val pathValue = path.eval(input).asInstanceOf[UTF8String]
+    if (jsonValue == null || pathValue == null) return null
+
+    evaluator.setJson(jsonValue)
+    if (!path.foldable) {
+      evaluator.setPath(pathValue)
+    }
+    Option(evaluator.exists()).getOrElse(JsonExists.applyOnError(onError, jsonValue))
+  }
+
+  override protected def doGenCode(ctx: CodegenContext, ev: ExprCode): ExprCode = {
+    val evaluatorClass = classOf[GetJsonObjectEvaluator].getName
+    val initEvaluator = path.foldable match {
+      case true if path.eval() != null =>
+        val cachedPath = path.eval().asInstanceOf[UTF8String]
+        val refCachedPath = ctx.addReferenceObj("cachedPath", cachedPath)
+        s"new $evaluatorClass($refCachedPath)"
+      case _ => s"new $evaluatorClass()"
+    }
+    val evaluator = ctx.addMutableState(evaluatorClass, "evaluator",
+      v => s"""$v = $initEvaluator;""", forceInline = true)
+    val onErrorRef = ctx.addReferenceObj("onError", onError)
+    val jsonExistsClass = JsonExists.getClass.getName.stripSuffix("$")
+    val jsonEval = json.genCode(ctx)
+    val pathEval = path.genCode(ctx)
+    val resultTerm = ctx.freshName("result")
+    val setPath = if (!path.foldable) {
+      s"$evaluator.setPath(${pathEval.value});"
+    } else {
+      ""
+    }
+
+    ev.copy(code = code"""
+       |${jsonEval.code}
+       |${pathEval.code}
+       |boolean ${ev.isNull} = ${jsonEval.isNull} || ${pathEval.isNull};
+       |boolean ${ev.value} = ${CodeGenerator.defaultValue(dataType)};
+       |if (!${ev.isNull}) {
+       |  $evaluator.setJson(${jsonEval.value});
+       |  $setPath
+       |  java.lang.Boolean $resultTerm = $evaluator.exists();
+       |  if ($resultTerm == null) {
+       |    $resultTerm = $jsonExistsClass.applyOnError($onErrorRef, ${jsonEval.value});
+       |  }
+       |  ${ev.isNull} = $resultTerm == null;
+       |  if (!${ev.isNull}) {
+       |    ${ev.value} = $resultTerm.booleanValue();
+       |  }
+       |}
+       |""".stripMargin)
+  }
+
+  override def sql: String = {
+    val onErrorSql = onError match {
+      case JsonExistsOnError.TrueOnError => " TRUE ON ERROR"
+      case JsonExistsOnError.FalseOnError => ""
+      case JsonExistsOnError.UnknownOnError => " UNKNOWN ON ERROR"
+      case JsonExistsOnError.ErrorOnError => " ERROR ON ERROR"
+    }
+    s"$prettyName(${json.sql}, ${path.sql}$onErrorSql)"
+  }
+
+  override protected def withNewChildrenInternal(
+      newLeft: Expression, newRight: Expression): JsonExists =
+    copy(json = newLeft, path = newRight)
+}
+
+object JsonExists {
+  def applyOnError(onError: JsonExistsOnError, json: UTF8String): java.lang.Boolean = {
+    onError match {
+      case JsonExistsOnError.TrueOnError => java.lang.Boolean.TRUE
+      case JsonExistsOnError.FalseOnError => java.lang.Boolean.FALSE
+      case JsonExistsOnError.UnknownOnError => null
+      case JsonExistsOnError.ErrorOnError =>
+        throw QueryExecutionErrors.malformedRecordsDetectedInRecordParsingError(
+          json.toString,
+          SparkException.internalError("JSON_EXISTS encountered malformed JSON input."))
+    }
+  }
 }
 
 /**

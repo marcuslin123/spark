@@ -891,6 +891,34 @@ case class GetJsonObjectEvaluator(cachedPath: UTF8String) {
     }
   }
 
+  def exists(): java.lang.Boolean = {
+    if (jsonStr == null) return null
+
+    val parsed = if (cachedPath != null) {
+      parsedPath
+    } else {
+      parsePath(pathStr)
+    }
+
+    if (parsed.isDefined) {
+      try {
+        Utils.tryWithResource(CreateJacksonParser.utf8String(jsonFactory, jsonStr)) { parser =>
+          parser.nextToken()
+          val matched = evaluatePathExists(parser, parsed.get)
+          if (parser.nextToken() == null) {
+            java.lang.Boolean.valueOf(matched)
+          } else {
+            null
+          }
+        }
+      } catch {
+        case _: JsonProcessingException => null
+      }
+    } else {
+      null
+    }
+  }
+
   private def parsePath(path: UTF8String): Option[List[PathInstruction]] = {
     if (path != null) {
       JsonPathParser.parse(path.toString)
@@ -1043,6 +1071,52 @@ case class GetJsonObjectEvaluator(cachedPath: UTF8String) {
         // wildcard field match
         p.nextToken()
         evaluatePath(p, g, style, xs)
+
+      case _ =>
+        p.skipChildren()
+        false
+    }
+  }
+
+  private def evaluatePathExists(p: JsonParser, path: List[PathInstruction]): Boolean = {
+    (p.getCurrentToken, path) match {
+      case (_, Nil) =>
+        p.skipChildren()
+        true
+
+      case (START_OBJECT, Key :: xs) =>
+        var found = false
+        while (p.nextToken() != END_OBJECT) {
+          if (found) {
+            p.skipChildren()
+          } else {
+            found = evaluatePathExists(p, xs)
+          }
+        }
+        found
+
+      case (START_ARRAY, Subscript :: Wildcard :: xs) =>
+        var found = false
+        while (p.nextToken() != END_ARRAY) {
+          if (found) {
+            p.skipChildren()
+          } else {
+            found = evaluatePathExists(p, xs)
+          }
+        }
+        found
+
+      case (START_ARRAY, Subscript :: Index(idx) :: xs) =>
+        p.nextToken()
+        arrayIndex(p, () => evaluatePathExists(p, xs))(idx)
+
+      case (FIELD_NAME, Named(name) :: xs) if p.currentName == name =>
+        p.nextToken()
+        evaluatePathExists(p, xs)
+
+      case (FIELD_NAME, Wildcard :: xs) =>
+        p.nextToken()
+        evaluatePathExists(p, xs)
 
       case _ =>
         p.skipChildren()
